@@ -148,7 +148,23 @@ class NerfModel(nn.Module):
         )
 
     def setup(self):
-        import jax.numpy as jnp
+
+        print(f"--- Entering NerfModel.setup ---")
+        print(f"Original self.appearance_ids type: {type(self.appearance_ids)}")
+        print(f"Original self.camera_ids type: {type(self.camera_ids)}")
+        print(f"Original self.warp_ids type: {type(self.warp_ids)}")
+
+        # Convert attributes to JAX arrays defensively
+        import jax.numpy as jnp  # Ensure jnp is imported
+
+        self.appearance_ids = jnp.array(self.appearance_ids)
+        self.camera_ids = jnp.array(self.camera_ids)
+        self.warp_ids = jnp.array(self.warp_ids)
+
+        print(f"Converted self.appearance_ids type: {type(self.appearance_ids)}")
+        print(f"Converted self.camera_ids type: {type(self.camera_ids)}")
+        print(f"Converted self.warp_ids type: {type(self.warp_ids)}")
+        print(f"--- After conversion in NerfModel.setup ---")
 
         print(f"--- Entering {self.__class__.__name__}.setup ---")
         # ... add checks for attributes potentially holding lists
@@ -159,7 +175,11 @@ class NerfModel(nn.Module):
         # ... add checks for variables just before JAX calls
 
         if self.use_warp:
-            self.warp_field = self.create_warp_field(self, num_batch_dims=2)
+            print("Initializing warp_field...")
+            self.warp_field = self.create_warp_field(
+                self, num_batch_dims=2
+            )  # Error might happen inside here
+            print("Warp_field initialized.")
 
         self.point_encoder = model_utils.vmap_module(
             modules.SinusoidalEncoder, num_batch_dims=2
@@ -205,6 +225,7 @@ class NerfModel(nn.Module):
 
         # ... original setup code
         print(f"--- Exiting {self.__class__.__name__}.setup ---")
+        print(f"--- Exiting NerfModel.setup ---")
 
     def get_condition_inputs(self, viewdirs, metadata, metadata_encoded=False):
         """Create the condition inputs for the NeRF template."""
