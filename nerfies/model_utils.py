@@ -26,7 +26,6 @@ import jax.numpy as jnp
 
 @struct.dataclass
 class TrainState:
-    optimizer: optax.Optimizer
     warp_alpha: jnp.ndarray = 0.0
     time_alpha: jnp.ndarray = 0.0
 
