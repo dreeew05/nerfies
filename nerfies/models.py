@@ -99,6 +99,10 @@ class NerfModel(nn.Module):
     num_warp_features: int
     num_warp_freqs: int
 
+    appearance_ids: Sequence[int]
+    camera_ids: Sequence[int]
+    warp_ids: Sequence[int]
+
     activation: types.Activation = nn.relu
     sigma_activation: types.Activation = nn.relu
     use_white_background: bool = False
@@ -144,6 +148,8 @@ class NerfModel(nn.Module):
         )
 
     def setup(self):
+        import jax.numpy as jnp
+
         if self.use_warp:
             self.warp_field = self.create_warp_field(self, num_batch_dims=2)
 
