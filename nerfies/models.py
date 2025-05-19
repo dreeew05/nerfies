@@ -315,9 +315,17 @@ class NerfModel(nn.Module):
         return_points=False,
         return_weights=False,
     ):
+
+        print(f"--- Entering NerfModel.render_samples (level: {level}) ---")
+        # Add checks for inputs if needed, but during init they should be JAX arrays
+        # print(f"metadata type: {type(metadata)}") # metadata is a dict
+        # print(f"metadata['warp'] type: {type(metadata.get('warp'))}") # Check type of specific metadata entries
+
         trunk_condition, alpha_condition, rgb_condition = self.get_condition_inputs(
             viewdirs, metadata, metadata_encoded
         )
+        # Add checks for conditions if needed
+        # print(f"trunk_condition type: {type(trunk_condition)}") # Could be None or JAX array
 
         out = {}
         if return_points:
@@ -330,44 +338,33 @@ class NerfModel(nn.Module):
                 if self.warp_metadata_encoder_type == "time"
                 else metadata["warp"]
             )
-            warp_metadata = jnp.broadcast_to(
+            # This is the suspicious broadcast_to call location from earlier
+            print(f"warp_metadata before broadcast_to type: {type(warp_metadata)}")
+            print(
+                f"warp_metadata shape: {warp_metadata.shape if hasattr(warp_metadata, 'shape') else 'N/A'}"
+            )
+            # ... other print checks on warp_metadata[:, jnp.newaxis, :] if needed
+
+            warp_metadata = jnp.broadcast_to(  # <--- Error might originate here
                 warp_metadata[:, jnp.newaxis, :],
                 shape=(*points.shape[:2], metadata_channels),
             )
+            print(
+                f"warp_metadata after broadcast_to type: {type(warp_metadata)}"
+            )  # Should be JAX array
+
+            # Call to warp_field.__call__ happens here
+            print("Calling warp_field...")
             warp_out = self.warp_field(
                 points, warp_metadata, warp_extra, use_warp_jacobian, metadata_encoded
             )
-            points = warp_out["warped_points"]
-            if "jacobian" in warp_out:
-                out["warp_jacobian"] = warp_out["jacobian"]
-            if return_points:
-                out["warped_points"] = warp_out["warped_points"]
-
-        points_embed = self.point_encoder(points)
-
-        raw = self.nerf_mlps[level](
-            points_embed, trunk_condition, alpha_condition, rgb_condition
-        )
-        raw = model_utils.noise_regularize(
-            self.make_rng(level), raw, self.noise_std, self.use_stratified_sampling
-        )
-        rgb = nn.sigmoid(raw["rgb"])
-        sigma = self.sigma_activation(jnp.squeeze(raw["alpha"], axis=-1))
-        out.update(
-            model_utils.volumetric_rendering(
-                rgb,
-                sigma,
-                z_vals,
-                directions,
-                return_weights=return_weights,
-                use_white_background=self.use_white_background,
-                sample_at_infinity=self.use_sample_at_infinity,
-            )
-        )
-
+            print("Warp_field called.")
+            # ... rest of the method
+        # ... rest of render_samples
+        print(f"--- Exiting NerfModel.render_samples ---")
         return out
 
-    def __call__(
+    def __call__(  # This method is traced during model.init
         self,
         rays_dict: Dict[str, Any],
         warp_extra: Dict[str, Any],
@@ -378,49 +375,40 @@ class NerfModel(nn.Module):
         return_warp_jacobian=False,
         deterministic=False,
     ):
-        """Nerf Model.
 
-        Args:
-          rays_dict: a dictionary containing the ray information. Contains:
-            'origins': the ray origins.
-            'directions': unit vectors which are the ray directions.
-            'viewdirs': (optional) unit vectors which are viewing directions.
-            'metadata': a dictionary of metadata indices e.g., for warping.
-          warp_extra: parameters for the warp e.g., alpha.
-          metadata_encoded: if True, assume the metadata is already encoded.
-          use_warp: if True use the warp field (if also enabled in the model).
-          return_points: if True return the points (and warped points if
-            applicable).
-          return_weights: if True return the density weights.
-          return_warp_jacobian: if True computes and returns the warp Jacobians.
-          deterministic: whether evaluation should be deterministic.
+        print(f"--- Entering NerfModel.__call__ ---")
+        # Add checks for inputs received during init
+        # print(f"rays_dict type: {type(rays_dict)}") # Should be dict
+        # print(f"rays_dict['metadata'] type: {type(rays_dict.get('metadata'))}") # Should be dict
+        # print(f"rays_dict['metadata']['appearance'] type: {type(rays_dict['metadata'].get('appearance'))}") # Should be JAX array during init
 
-        Returns:
-          ret: list, [(rgb, disp, acc), (rgb_coarse, disp_coarse, acc_coarse)]
-        """
         use_warp = self.use_warp and use_warp
         return_weights = self.use_weights or return_weights
-        # Extract viewdirs from the ray array
         origins = rays_dict["origins"]
         directions = rays_dict["directions"]
         metadata = rays_dict["metadata"]
         if "viewdirs" in rays_dict:
             viewdirs = rays_dict["viewdirs"]
-        else:  # viewdirs are normalized rays_d
+        else:
             viewdirs = directions
 
         # Evaluate coarse samples.
-        z_vals, points = model_utils.sample_along_rays(
-            self.make_rng("coarse"),
-            origins,
-            directions,
-            self.num_coarse_samples,
-            self.near,
-            self.far,
-            self.use_stratified_sampling,
-            self.use_linear_disparity,
+        print("Sampling coarse rays...")
+        z_vals, points = (
+            model_utils.sample_along_rays(  # Error could be here too if inputs are wrong type
+                self.make_rng("coarse"),
+                origins,
+                directions,
+                self.num_coarse_samples,  # This is an integer, fine
+                self.near,  # Float, fine
+                self.far,  # Float, fine
+                self.use_stratified_sampling,  # Bool, fine
+                self.use_linear_disparity,  # Bool, fine
+            )
         )
-        coarse_ret = self.render_samples(
+        print("Coarse rays sampled.")
+        print("Rendering coarse samples...")
+        coarse_ret = self.render_samples(  # Calls render_samples
             "coarse",
             points,
             z_vals,
@@ -434,22 +422,25 @@ class NerfModel(nn.Module):
             return_points=return_points,
             return_weights=True,
         )
+        print("Coarse samples rendered.")
         out = {"coarse": coarse_ret}
 
         # Evaluate fine samples.
         if self.num_fine_samples > 0:
+            print("Sampling fine rays...")
             z_vals_mid = 0.5 * (z_vals[..., 1:] + z_vals[..., :-1])
-            z_vals, points = model_utils.sample_pdf(
+            z_vals, points = model_utils.sample_pdf(  # Error could be here too
                 self.make_rng("fine"),
                 z_vals_mid,
                 coarse_ret["weights"][..., 1:-1],
                 origins,
                 directions,
-                z_vals,
-                self.num_fine_samples,
-                self.use_stratified_sampling,
+                self.num_fine_samples,  # Integer, fine
+                self.use_stratified_sampling,  # Bool, fine
             )
-            out["fine"] = self.render_samples(
+            print("Fine rays sampled.")
+            print("Rendering fine samples...")
+            out["fine"] = self.render_samples(  # Calls render_samples again
                 "fine",
                 points,
                 z_vals,
@@ -463,122 +454,126 @@ class NerfModel(nn.Module):
                 return_points=return_points,
                 return_weights=return_weights,
             )
+            print("Fine samples rendered.")
 
         if not return_weights:
-            del out["coarse"]["weights"]
+            if "weights" in out["coarse"]:
+                del out["coarse"]["weights"]
+            if "fine" in out and "weights" in out["fine"]:
+                del out["fine"]["weights"]
 
+        print(f"--- Exiting NerfModel.__call__ ---")
         return out
 
+    def construct_nerf(
+        key,
+        config: configs.ModelConfig,
+        batch_size: int,
+        appearance_ids: Sequence[int],
+        camera_ids: Sequence[int],
+        warp_ids: Sequence[int],
+        near: float,
+        far: float,
+        use_warp_jacobian: bool = False,
+        use_weights: bool = False,
+    ):
+        """Neural Randiance Field.
 
-def construct_nerf(
-    key,
-    config: configs.ModelConfig,
-    batch_size: int,
-    appearance_ids: Sequence[int],
-    camera_ids: Sequence[int],
-    warp_ids: Sequence[int],
-    near: float,
-    far: float,
-    use_warp_jacobian: bool = False,
-    use_weights: bool = False,
-):
-    """Neural Randiance Field.
+        Args:
+          key: jnp.ndarray. Random number generator.
+          config: model configs.
+          batch_size: the evaluation batch size used for shape inference.
+          appearance_ids: the appearance embeddings.
+          camera_ids: the camera embeddings.
+          warp_ids: the warp embeddings.
+          near: the near plane of the scene.
+          far: the far plane of the scene.
+          use_warp_jacobian: if True the model computes and returns the Jacobian of
+            the warped points.
+          use_weights: if True return the density weights from the NeRF.
 
-    Args:
-      key: jnp.ndarray. Random number generator.
-      config: model configs.
-      batch_size: the evaluation batch size used for shape inference.
-      appearance_ids: the appearance embeddings.
-      camera_ids: the camera embeddings.
-      warp_ids: the warp embeddings.
-      near: the near plane of the scene.
-      far: the far plane of the scene.
-      use_warp_jacobian: if True the model computes and returns the Jacobian of
-        the warped points.
-      use_weights: if True return the density weights from the NeRF.
+        Returns:
+          model: nn.Model. Nerf model with parameters.
+          state: flax.Module.state. Nerf model state for stateful parameters.
+        """
+        num_nerf_point_freqs = config.num_nerf_point_freqs
+        num_nerf_viewdir_freqs = config.num_nerf_viewdir_freqs
+        num_coarse_samples = config.num_coarse_samples
+        num_fine_samples = config.num_fine_samples
+        use_viewdirs = config.use_viewdirs
+        noise_std = config.noise_std
+        use_stratified_sampling = config.use_stratified_sampling
+        use_white_background = config.use_white_background
+        nerf_trunk_depth = config.nerf_trunk_depth
+        nerf_trunk_width = config.nerf_trunk_width
+        nerf_rgb_branch_depth = config.nerf_rgb_branch_depth
+        nerf_rgb_branch_width = config.nerf_rgb_branch_width
+        nerf_skips = config.nerf_skips
+        alpha_channels = config.alpha_channels
+        rgb_channels = config.rgb_channels
+        use_linear_disparity = config.use_linear_disparity
 
-    Returns:
-      model: nn.Model. Nerf model with parameters.
-      state: flax.Module.state. Nerf model state for stateful parameters.
-    """
-    num_nerf_point_freqs = config.num_nerf_point_freqs
-    num_nerf_viewdir_freqs = config.num_nerf_viewdir_freqs
-    num_coarse_samples = config.num_coarse_samples
-    num_fine_samples = config.num_fine_samples
-    use_viewdirs = config.use_viewdirs
-    noise_std = config.noise_std
-    use_stratified_sampling = config.use_stratified_sampling
-    use_white_background = config.use_white_background
-    nerf_trunk_depth = config.nerf_trunk_depth
-    nerf_trunk_width = config.nerf_trunk_width
-    nerf_rgb_branch_depth = config.nerf_rgb_branch_depth
-    nerf_rgb_branch_width = config.nerf_rgb_branch_width
-    nerf_skips = config.nerf_skips
-    alpha_channels = config.alpha_channels
-    rgb_channels = config.rgb_channels
-    use_linear_disparity = config.use_linear_disparity
+        model = NerfModel(
+            num_coarse_samples=num_coarse_samples,
+            num_fine_samples=num_fine_samples,
+            use_viewdirs=use_viewdirs,
+            near=near,
+            far=far,
+            noise_std=noise_std,
+            nerf_trunk_depth=nerf_trunk_depth,
+            nerf_trunk_width=nerf_trunk_width,
+            nerf_rgb_branch_depth=nerf_rgb_branch_depth,
+            nerf_rgb_branch_width=nerf_rgb_branch_width,
+            use_alpha_condition=config.use_alpha_condition,
+            use_rgb_condition=config.use_rgb_condition,
+            activation=config.activation,
+            sigma_activation=config.sigma_activation,
+            nerf_skips=nerf_skips,
+            alpha_channels=alpha_channels,
+            rgb_channels=rgb_channels,
+            use_stratified_sampling=use_stratified_sampling,
+            use_white_background=use_white_background,
+            use_sample_at_infinity=config.use_sample_at_infinity,
+            num_nerf_point_freqs=num_nerf_point_freqs,
+            num_nerf_viewdir_freqs=num_nerf_viewdir_freqs,
+            use_linear_disparity=use_linear_disparity,
+            use_warp_jacobian=use_warp_jacobian,
+            use_weights=use_weights,
+            use_appearance_metadata=config.use_appearance_metadata,
+            use_camera_metadata=config.use_camera_metadata,
+            use_warp=config.use_warp,
+            appearance_ids=appearance_ids,
+            camera_ids=camera_ids,
+            warp_ids=warp_ids,
+            num_appearance_features=config.appearance_metadata_dims,
+            num_camera_features=config.camera_metadata_dims,
+            num_warp_freqs=config.num_warp_freqs,
+            num_warp_features=config.num_warp_features,
+            warp_field_type=config.warp_field_type,
+            warp_metadata_encoder_type=config.warp_metadata_encoder_type,
+            warp_kwargs=immutabledict.immutabledict(config.warp_kwargs),
+        )
 
-    model = NerfModel(
-        num_coarse_samples=num_coarse_samples,
-        num_fine_samples=num_fine_samples,
-        use_viewdirs=use_viewdirs,
-        near=near,
-        far=far,
-        noise_std=noise_std,
-        nerf_trunk_depth=nerf_trunk_depth,
-        nerf_trunk_width=nerf_trunk_width,
-        nerf_rgb_branch_depth=nerf_rgb_branch_depth,
-        nerf_rgb_branch_width=nerf_rgb_branch_width,
-        use_alpha_condition=config.use_alpha_condition,
-        use_rgb_condition=config.use_rgb_condition,
-        activation=config.activation,
-        sigma_activation=config.sigma_activation,
-        nerf_skips=nerf_skips,
-        alpha_channels=alpha_channels,
-        rgb_channels=rgb_channels,
-        use_stratified_sampling=use_stratified_sampling,
-        use_white_background=use_white_background,
-        use_sample_at_infinity=config.use_sample_at_infinity,
-        num_nerf_point_freqs=num_nerf_point_freqs,
-        num_nerf_viewdir_freqs=num_nerf_viewdir_freqs,
-        use_linear_disparity=use_linear_disparity,
-        use_warp_jacobian=use_warp_jacobian,
-        use_weights=use_weights,
-        use_appearance_metadata=config.use_appearance_metadata,
-        use_camera_metadata=config.use_camera_metadata,
-        use_warp=config.use_warp,
-        appearance_ids=appearance_ids,
-        camera_ids=camera_ids,
-        warp_ids=warp_ids,
-        num_appearance_features=config.appearance_metadata_dims,
-        num_camera_features=config.camera_metadata_dims,
-        num_warp_freqs=config.num_warp_freqs,
-        num_warp_features=config.num_warp_features,
-        warp_field_type=config.warp_field_type,
-        warp_metadata_encoder_type=config.warp_metadata_encoder_type,
-        warp_kwargs=immutabledict.immutabledict(config.warp_kwargs),
-    )
+        init_rays_dict = {
+            "origins": jnp.ones((batch_size, 3), jnp.float32),
+            "directions": jnp.ones((batch_size, 3), jnp.float32),
+            "metadata": {
+                "warp": jnp.ones((batch_size, 1), jnp.uint32),
+                "camera": jnp.ones((batch_size, 1), jnp.uint32),
+                "appearance": jnp.ones((batch_size, 1), jnp.uint32),
+                "time": jnp.ones((batch_size, 1), jnp.float32),
+            },
+        }
+        warp_extra = {
+            "alpha": 0.0,
+            "time_alpha": 0.0,
+        }
 
-    init_rays_dict = {
-        "origins": jnp.ones((batch_size, 3), jnp.float32),
-        "directions": jnp.ones((batch_size, 3), jnp.float32),
-        "metadata": {
-            "warp": jnp.ones((batch_size, 1), jnp.uint32),
-            "camera": jnp.ones((batch_size, 1), jnp.uint32),
-            "appearance": jnp.ones((batch_size, 1), jnp.uint32),
-            "time": jnp.ones((batch_size, 1), jnp.float32),
-        },
-    }
-    warp_extra = {
-        "alpha": 0.0,
-        "time_alpha": 0.0,
-    }
+        key, key1, key2 = random.split(key, 3)
+        params = model.init(
+            {"params": key, "coarse": key1, "fine": key2},
+            init_rays_dict,
+            warp_extra=warp_extra,
+        )["params"]
 
-    key, key1, key2 = random.split(key, 3)
-    params = model.init(
-        {"params": key, "coarse": key1, "fine": key2},
-        init_rays_dict,
-        warp_extra=warp_extra,
-    )["params"]
-
-    return model, params
+        return model, params
