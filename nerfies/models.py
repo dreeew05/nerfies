@@ -147,38 +147,47 @@ class NerfModel(nn.Module):
             **model.warp_kwargs,
         )
 
-    def setup(self):
+    # Inside nerfies/models.py, within the NerfModel class definition
 
+    def setup(self):
         print(f"--- Entering NerfModel.setup ---")
         print(f"Original self.appearance_ids type: {type(self.appearance_ids)}")
         print(f"Original self.camera_ids type: {type(self.camera_ids)}")
         print(f"Original self.warp_ids type: {type(self.warp_ids)}")
 
-        # Convert attributes to JAX arrays defensively
-        import jax.numpy as jnp  # Ensure jnp is imported
+        # Ensure jnp is imported in models.py (add at the top if not there)
+        import jax.numpy as jnp
 
-        self.appearance_ids = jnp.array(self.appearance_ids)
-        self.camera_ids = jnp.array(self.camera_ids)
-        self.warp_ids = jnp.array(self.warp_ids)
+        # --- Fix for SetAttributeInModuleSetupError ---
+        # Create NEW internal attributes for the JAX array versions.
+        # You cannot reassign self.appearance_ids etc. because they are frozen
+        # attributes set during __init__.
+        self._appearance_ids_jnp = jnp.array(self.appearance_ids)
+        self._camera_ids_jnp = jnp.array(self.camera_ids)
+        self._warp_ids_jnp = jnp.array(self.warp_ids)
+        # --- End of Fix ---
 
-        print(f"Converted self.appearance_ids type: {type(self.appearance_ids)}")
-        print(f"Converted self.camera_ids type: {type(self.camera_ids)}")
-        print(f"Converted self.warp_ids type: {type(self.warp_ids)}")
-        print(f"--- After conversion in NerfModel.setup ---")
+        # --- Debugging Prints (optional, but helpful) ---
+        print(f"Created _appearance_ids_jnp type: {type(self._appearance_ids_jnp)}")
+        print(f"Created _camera_ids_jnp type: {type(self._camera_ids_jnp)}")
+        print(f"Created _warp_ids_jnp type: {type(self._warp_ids_jnp)}")
+        print(f"--- After creating new JAX array attributes in NerfModel.setup ---")
+        # --- End of Debugging Prints ---
 
-        print(f"--- Entering {self.__class__.__name__}.setup ---")
-        # ... add checks for attributes potentially holding lists
-        if hasattr(self, "appearance_ids"):  # Check if the attribute exists
-            print(f"self.appearance_ids type: {type(self.appearance_ids)}")
-            if isinstance(self.appearance_ids, list):
-                print("self.appearance_ids is a list!")
-        # ... add checks for variables just before JAX calls
+        # The rest of the original setup method continues here,
+        # initializing submodules.
 
         if self.use_warp:
             print("Initializing warp_field...")
-            self.warp_field = self.create_warp_field(
-                self, num_batch_dims=2
-            )  # Error might happen inside here
+            # --- IMPORTANT ---
+            # If create_warp_field (in warping.py) or the warp field modules
+            # it creates internally access the parent model's attributes
+            # like model.warp_ids, they will still access the ORIGINAL tuple attribute.
+            # These parts of the code (in warping.py) NEED to be updated to use
+            # the new self._warp_ids_jnp attribute if they use the IDs in a JAX operation
+            # expecting an array.
+            # ---------------
+            self.warp_field = self.create_warp_field(self, num_batch_dims=2)
             print("Warp_field initialized.")
 
         self.point_encoder = model_utils.vmap_module(
@@ -187,12 +196,23 @@ class NerfModel(nn.Module):
         self.viewdir_encoder = model_utils.vmap_module(
             modules.SinusoidalEncoder, num_batch_dims=1
         )(num_freqs=self.num_nerf_viewdir_freqs)
+
         if self.use_appearance_metadata:
+            # --- IMPORTANT ---
+            # The GloEncoder constructor uses num_embeddings (integer derived from max(tuple)+1).
+            # This is fine. BUT, if GloEncoder's *internal* setup or __call__ method
+            # accesses the parent model's attributes (like appearance_ids)
+            # passed to it implicitly via the module hierarchy, it must be updated
+            # to use the new self._appearance_ids_jnp attribute for JAX operations.
+            # ---------------
             self.appearance_encoder = glo.GloEncoder(
-                num_embeddings=self.num_appearance_embeddings,
+                num_embeddings=self.num_appearance_embeddings,  # Uses max(original tuple)+1
                 features=self.num_appearance_features,
             )
         if self.use_camera_metadata:
+            # --- IMPORTANT ---
+            # Same applies to camera_encoder with self._camera_ids_jnp
+            # ---------------
             self.camera_encoder = glo.GloEncoder(
                 num_embeddings=self.num_camera_embeddings,
                 features=self.num_camera_features,
@@ -223,9 +243,18 @@ class NerfModel(nn.Module):
             )
         self.nerf_mlps = nerf_mlps
 
-        # ... original setup code
-        print(f"--- Exiting {self.__class__.__name__}.setup ---")
         print(f"--- Exiting NerfModel.setup ---")
+
+    # --- IMPORTANT: Update other methods in NerfModel ---
+    # Any method in NerfModel (e.g., __call__, render_samples, get_condition_inputs)
+    # or any other function/method that receives the NerfModel instance and uses
+    # self.appearance_ids, self.camera_ids, or self.warp_ids in a JAX operation
+    # expecting an array MUST be updated to use the new self._appearance_ids_jnp,
+    # self._camera_ids_jnp, self._warp_ids_jnp attributes instead.
+    # You will likely need to find these specific usages throughout models.py,
+    # warping.py, and potentially other files if they receive the model instance
+    # or parts of its state and access these attributes.
+    # --- End of IMPORTANT ---
 
     def get_condition_inputs(self, viewdirs, metadata, metadata_encoded=False):
         """Create the condition inputs for the NeRF template."""
