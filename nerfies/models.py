@@ -465,115 +465,116 @@ class NerfModel(nn.Module):
         print(f"--- Exiting NerfModel.__call__ ---")
         return out
 
-    def construct_nerf(
-        key,
-        config: configs.ModelConfig,
-        batch_size: int,
-        appearance_ids: Sequence[int],
-        camera_ids: Sequence[int],
-        warp_ids: Sequence[int],
-        near: float,
-        far: float,
-        use_warp_jacobian: bool = False,
-        use_weights: bool = False,
-    ):
-        """Neural Randiance Field.
 
-        Args:
-          key: jnp.ndarray. Random number generator.
-          config: model configs.
-          batch_size: the evaluation batch size used for shape inference.
-          appearance_ids: the appearance embeddings.
-          camera_ids: the camera embeddings.
-          warp_ids: the warp embeddings.
-          near: the near plane of the scene.
-          far: the far plane of the scene.
-          use_warp_jacobian: if True the model computes and returns the Jacobian of
-            the warped points.
-          use_weights: if True return the density weights from the NeRF.
+def construct_nerf(
+    key,
+    config: configs.ModelConfig,
+    batch_size: int,
+    appearance_ids: Sequence[int],
+    camera_ids: Sequence[int],
+    warp_ids: Sequence[int],
+    near: float,
+    far: float,
+    use_warp_jacobian: bool = False,
+    use_weights: bool = False,
+):
+    """Neural Randiance Field.
 
-        Returns:
-          model: nn.Model. Nerf model with parameters.
-          state: flax.Module.state. Nerf model state for stateful parameters.
-        """
-        num_nerf_point_freqs = config.num_nerf_point_freqs
-        num_nerf_viewdir_freqs = config.num_nerf_viewdir_freqs
-        num_coarse_samples = config.num_coarse_samples
-        num_fine_samples = config.num_fine_samples
-        use_viewdirs = config.use_viewdirs
-        noise_std = config.noise_std
-        use_stratified_sampling = config.use_stratified_sampling
-        use_white_background = config.use_white_background
-        nerf_trunk_depth = config.nerf_trunk_depth
-        nerf_trunk_width = config.nerf_trunk_width
-        nerf_rgb_branch_depth = config.nerf_rgb_branch_depth
-        nerf_rgb_branch_width = config.nerf_rgb_branch_width
-        nerf_skips = config.nerf_skips
-        alpha_channels = config.alpha_channels
-        rgb_channels = config.rgb_channels
-        use_linear_disparity = config.use_linear_disparity
+    Args:
+      key: jnp.ndarray. Random number generator.
+      config: model configs.
+      batch_size: the evaluation batch size used for shape inference.
+      appearance_ids: the appearance embeddings.
+      camera_ids: the camera embeddings.
+      warp_ids: the warp embeddings.
+      near: the near plane of the scene.
+      far: the far plane of the scene.
+      use_warp_jacobian: if True the model computes and returns the Jacobian of
+        the warped points.
+      use_weights: if True return the density weights from the NeRF.
 
-        model = NerfModel(
-            num_coarse_samples=num_coarse_samples,
-            num_fine_samples=num_fine_samples,
-            use_viewdirs=use_viewdirs,
-            near=near,
-            far=far,
-            noise_std=noise_std,
-            nerf_trunk_depth=nerf_trunk_depth,
-            nerf_trunk_width=nerf_trunk_width,
-            nerf_rgb_branch_depth=nerf_rgb_branch_depth,
-            nerf_rgb_branch_width=nerf_rgb_branch_width,
-            use_alpha_condition=config.use_alpha_condition,
-            use_rgb_condition=config.use_rgb_condition,
-            activation=config.activation,
-            sigma_activation=config.sigma_activation,
-            nerf_skips=nerf_skips,
-            alpha_channels=alpha_channels,
-            rgb_channels=rgb_channels,
-            use_stratified_sampling=use_stratified_sampling,
-            use_white_background=use_white_background,
-            use_sample_at_infinity=config.use_sample_at_infinity,
-            num_nerf_point_freqs=num_nerf_point_freqs,
-            num_nerf_viewdir_freqs=num_nerf_viewdir_freqs,
-            use_linear_disparity=use_linear_disparity,
-            use_warp_jacobian=use_warp_jacobian,
-            use_weights=use_weights,
-            use_appearance_metadata=config.use_appearance_metadata,
-            use_camera_metadata=config.use_camera_metadata,
-            use_warp=config.use_warp,
-            appearance_ids=appearance_ids,
-            camera_ids=camera_ids,
-            warp_ids=warp_ids,
-            num_appearance_features=config.appearance_metadata_dims,
-            num_camera_features=config.camera_metadata_dims,
-            num_warp_freqs=config.num_warp_freqs,
-            num_warp_features=config.num_warp_features,
-            warp_field_type=config.warp_field_type,
-            warp_metadata_encoder_type=config.warp_metadata_encoder_type,
-            warp_kwargs=immutabledict.immutabledict(config.warp_kwargs),
-        )
+    Returns:
+      model: nn.Model. Nerf model with parameters.
+      state: flax.Module.state. Nerf model state for stateful parameters.
+    """
+    num_nerf_point_freqs = config.num_nerf_point_freqs
+    num_nerf_viewdir_freqs = config.num_nerf_viewdir_freqs
+    num_coarse_samples = config.num_coarse_samples
+    num_fine_samples = config.num_fine_samples
+    use_viewdirs = config.use_viewdirs
+    noise_std = config.noise_std
+    use_stratified_sampling = config.use_stratified_sampling
+    use_white_background = config.use_white_background
+    nerf_trunk_depth = config.nerf_trunk_depth
+    nerf_trunk_width = config.nerf_trunk_width
+    nerf_rgb_branch_depth = config.nerf_rgb_branch_depth
+    nerf_rgb_branch_width = config.nerf_rgb_branch_width
+    nerf_skips = config.nerf_skips
+    alpha_channels = config.alpha_channels
+    rgb_channels = config.rgb_channels
+    use_linear_disparity = config.use_linear_disparity
 
-        init_rays_dict = {
-            "origins": jnp.ones((batch_size, 3), jnp.float32),
-            "directions": jnp.ones((batch_size, 3), jnp.float32),
-            "metadata": {
-                "warp": jnp.ones((batch_size, 1), jnp.uint32),
-                "camera": jnp.ones((batch_size, 1), jnp.uint32),
-                "appearance": jnp.ones((batch_size, 1), jnp.uint32),
-                "time": jnp.ones((batch_size, 1), jnp.float32),
-            },
-        }
-        warp_extra = {
-            "alpha": 0.0,
-            "time_alpha": 0.0,
-        }
+    model = NerfModel(
+        num_coarse_samples=num_coarse_samples,
+        num_fine_samples=num_fine_samples,
+        use_viewdirs=use_viewdirs,
+        near=near,
+        far=far,
+        noise_std=noise_std,
+        nerf_trunk_depth=nerf_trunk_depth,
+        nerf_trunk_width=nerf_trunk_width,
+        nerf_rgb_branch_depth=nerf_rgb_branch_depth,
+        nerf_rgb_branch_width=nerf_rgb_branch_width,
+        use_alpha_condition=config.use_alpha_condition,
+        use_rgb_condition=config.use_rgb_condition,
+        activation=config.activation,
+        sigma_activation=config.sigma_activation,
+        nerf_skips=nerf_skips,
+        alpha_channels=alpha_channels,
+        rgb_channels=rgb_channels,
+        use_stratified_sampling=use_stratified_sampling,
+        use_white_background=use_white_background,
+        use_sample_at_infinity=config.use_sample_at_infinity,
+        num_nerf_point_freqs=num_nerf_point_freqs,
+        num_nerf_viewdir_freqs=num_nerf_viewdir_freqs,
+        use_linear_disparity=use_linear_disparity,
+        use_warp_jacobian=use_warp_jacobian,
+        use_weights=use_weights,
+        use_appearance_metadata=config.use_appearance_metadata,
+        use_camera_metadata=config.use_camera_metadata,
+        use_warp=config.use_warp,
+        appearance_ids=appearance_ids,
+        camera_ids=camera_ids,
+        warp_ids=warp_ids,
+        num_appearance_features=config.appearance_metadata_dims,
+        num_camera_features=config.camera_metadata_dims,
+        num_warp_freqs=config.num_warp_freqs,
+        num_warp_features=config.num_warp_features,
+        warp_field_type=config.warp_field_type,
+        warp_metadata_encoder_type=config.warp_metadata_encoder_type,
+        warp_kwargs=immutabledict.immutabledict(config.warp_kwargs),
+    )
 
-        key, key1, key2 = random.split(key, 3)
-        params = model.init(
-            {"params": key, "coarse": key1, "fine": key2},
-            init_rays_dict,
-            warp_extra=warp_extra,
-        )["params"]
+    init_rays_dict = {
+        "origins": jnp.ones((batch_size, 3), jnp.float32),
+        "directions": jnp.ones((batch_size, 3), jnp.float32),
+        "metadata": {
+            "warp": jnp.ones((batch_size, 1), jnp.uint32),
+            "camera": jnp.ones((batch_size, 1), jnp.uint32),
+            "appearance": jnp.ones((batch_size, 1), jnp.uint32),
+            "time": jnp.ones((batch_size, 1), jnp.float32),
+        },
+    }
+    warp_extra = {
+        "alpha": 0.0,
+        "time_alpha": 0.0,
+    }
 
-        return model, params
+    key, key1, key2 = random.split(key, 3)
+    params = model.init(
+        {"params": key, "coarse": key1, "fine": key2},
+        init_rays_dict,
+        warp_extra=warp_extra,
+    )["params"]
+
+    return model, params
