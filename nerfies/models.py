@@ -144,11 +144,19 @@ class NerfModel(nn.Module):
             num_features=model.num_warp_features,
             num_batch_dims=num_batch_dims,
             metadata_encoder_type=model.warp_metadata_encoder_type,
-            **model.warp_kwargs
+            **model.warp_kwargs,
         )
 
     def setup(self):
         import jax.numpy as jnp
+
+        print(f"--- Entering {self.__class__.__name__}.setup ---")
+        # ... add checks for attributes potentially holding lists
+        if hasattr(self, "appearance_ids"):  # Check if the attribute exists
+            print(f"self.appearance_ids type: {type(self.appearance_ids)}")
+            if isinstance(self.appearance_ids, list):
+                print("self.appearance_ids is a list!")
+        # ... add checks for variables just before JAX calls
 
         if self.use_warp:
             self.warp_field = self.create_warp_field(self, num_batch_dims=2)
@@ -194,6 +202,9 @@ class NerfModel(nn.Module):
                 rgb_channels=self.rgb_channels,
             )
         self.nerf_mlps = nerf_mlps
+
+        # ... original setup code
+        print(f"--- Exiting {self.__class__.__name__}.setup ---")
 
     def get_condition_inputs(self, viewdirs, metadata, metadata_encoded=False):
         """Create the condition inputs for the NeRF template."""
